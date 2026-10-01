@@ -11,7 +11,13 @@ only (System Data, UI Toolkit, client-side human services, one service flow) - n
 
 ## Install
 
-1. Import `packages/Expense-Approval-Kit-1.3.twx` (Process Center / Workflow Center console: *Import Process App*; CP4BA: Business Automation Studio > *Import*).
+1. Import the package of your platform:
+   * IBM BPM 8.6.2 / IBM BAW 20-26 traditional: `packages/Expense-Approval-Kit-1.3.twx` (Process Center / Workflow Center console: *Import Process App*);
+   * CP4BA (Business Automation Studio > *Import*): `packages/Expense-Approval-Kit-1.3-CP4BA.twx` - the same app bound to the Cloud Pak System Data
+     (`8.6.0.0_TC`) with `serverBaseURL` defaulting to the Studio loopback `https://localhost:9443/bas` (on a Process Server set it to
+     `https://localhost:9443/baw-<instance>`). After the import create one snapshot in the Studio and install / play back that one: an
+     imported generated snapshot carries no compiled theme and renders unstyled outside the branch tip. This build also imports on
+     traditional BAW 20.0.0.1 and later.
 2. Put your managers and finance users into the teams *Expense Managers* and *Expense Finance* (the package's members are the lab administrator).
 3. Start *Expense Approval* from Process Portal, or over REST:
    `POST /rest/bpm/wle/v1/process?action=start&bpdId=<bpd id>&branchId=<branch id>&params={"request":{"requestId":"EXP-1","employee":"Sam Lee","amount":250,"category":"Travel","purpose":"Site visit"}}`
@@ -29,6 +35,10 @@ Start -> Validate (system task) -> Review expense (managers) -> Approved? -> [ap
 | Review expense | Expense Managers | request summary, policy note, comment, **Approve** / **Reject** |
 | Revise expense | All Users | manager feedback, editable amount / category / purpose, **Resubmit** |
 | Confirm payment | Expense Finance | request summary, payment reference, **Payment done** |
+
+## Versions
+
+* **1.3-CP4BA** - new: the same version built for CP4BA (see Install); the traditional `Expense-Approval-Kit-1.3.twx` is unchanged.
 
 ## Documents
 

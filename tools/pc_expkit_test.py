@@ -10,7 +10,7 @@ human services built with cshs(inputs=, outputs=, exits=).
    request fields and the policy note are shown, click Approve (boundary event -> End), open Confirm payment, fill the reference and click
    Payment done -> instance Completed.
 Prints PASS / FAIL lines; exit code 1 when a check failed."""
-import json, os, sys, time, urllib.parse
+import json, os, re, sys, time, urllib.parse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); import bawenv
 import requests, urllib3; urllib3.disable_warnings()
 ids = json.load(open(sys.argv[1])); NO_UI = '--no-ui' in sys.argv
@@ -22,7 +22,9 @@ def rest(m, path, **kw):
     try: return r.status_code, r.json()
     except Exception: return r.status_code, r.text
 def start(req):
-    st, j = rest('POST', ids['start_urls']['Expense Approval'].replace('/rest/bpm/wle/v1', '') + '&params=' + urllib.parse.quote(json.dumps({'request': req})))
+    url = ids['start_urls']['Expense Approval'].replace('/rest/bpm/wle/v1', '')
+    if os.environ.get('BAW_SNAPSHOT'): url = re.sub(r'branchId=[^&]*', 'snapshotId=' + os.environ['BAW_SNAPSHOT'], url)   # Process Server: installed snapshot
+    st, j = rest('POST', url + '&params=' + urllib.parse.quote(json.dumps({'request': req})))
     check('process start over REST (' + req['requestId'] + ')', st == 200, (st, str(j)[:300]))
     return j['data']['piid'] if st == 200 else None
 def instance(pid): return rest('GET', f'/process/{pid}?parts=all')[1]['data']
@@ -84,12 +86,12 @@ if not NO_UI:
             except Exception: pass
         def open_task(tkiid, text):
             rest('PUT', f'/task/{tkiid}?action=assign&toMe=true')   # claim first: Process Portal on BAW 24+ shows a "Claim Task" dialog for an unclaimed team task
-            pg.goto(H + '/ProcessPortal/launchTaskCompletion?taskId=' + tkiid, wait_until='load', timeout=120000)
-            for _ in range(2):
+            # Process Portal first; the classic task URL (the one Workplace opens) when the Portal shell stays empty (CP4BA 24 Studio)
+            for url in ('/ProcessPortal/launchTaskCompletion?taskId=' + tkiid, '/teamworks/process.lsw?zWorkflowState=1&zResetContext=true&zTaskId=' + tkiid):
+                pg.goto(H + url, wait_until='load', timeout=120000)
                 if pg.locator('button:has-text("Claim Task")').count(): pg.click('button:has-text("Claim Task")'); pg.wait_for_timeout(3000)
                 f = coach_frame(text)
-                if f: return f
-                pg.goto(H + '/ProcessPortal/launchTaskCompletion?taskId=' + tkiid, wait_until='load', timeout=120000)
+                if f: print('   task coach opened through', url.split('?')[0]); return f
             return None
         def coach_frame(text):
             for _ in range(30):

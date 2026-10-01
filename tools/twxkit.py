@@ -51,9 +51,15 @@ TYPES = {'String': '12.db884a3c-c533-44b7-bb2d-47bec8ad4022', 'Integer': '12.3fa
          'Team': '12.4f114e73-2520-40d7-b2ea-db9dcc4aa1f0', 'IndexedMap': '12.f2883d4c-0f90-43d8-9adb-32b75b555fb7',
          'SQLResult': '12.3b1e3757-a1f4-4c3f-bbb8-16fecd4d65c1', 'SQLParameter': '12.f453f500-ca4e-4264-a371-72c1892e8b7c',
          'DocumentFile': '12.e9d8a76b-6dba-4316-80e0-d6ac49366c82', 'CaseReference': '12.a4cf6da6-206a-43e9-bf8d-30d779844800'}
+# UI Toolkit types (referenced through the UI Toolkit dependency): the chart data contract and the sensor / geo records
+UITK_TYPES = {'DataSeries': '12.63a604e8-e026-4605-aae1-272b67822cc7', 'DataPoint': '12.db7aaff9-c0a7-4f62-80e7-4329dd49f4c2',
+              'DeviceInfo': '12.9ff0c19f-7322-4dee-9264-824e2c2371ec', 'GeoLocation': '12.6632ee5b-4a41-4935-bb5e-3b09f8c3cf8f',
+              'StreetAddress': '12.53cf0411-8c1d-454c-ab08-74eeb9d5a060', 'LatLong': '12.5cc4a08f-5502-43a3-9259-ae44bdb8cada'}
 TEAM_ALL_USERS = '24.da7e4d23-78cb-4483-98ed-b9c238308a03'   # System Data "All Users"
 TEAM_SYSTEM = '24.6fd38d02-81cf-48ab-bd42-8ff4c0a1628b'      # System Data "System" (lane of service flows)
-THEME_CLASSIC = '72.e77f2a7e-10b4-45ee-90eb-e5b1546cc743'    # System Data theme "Classic" (also "Carbon" 72.993e03e9-2574-40fc-807c-65b06be378fd)
+THEME_CLASSIC = '72.e77f2a7e-10b4-45ee-90eb-e5b1546cc743'    # System Data theme "Classic"
+THEME_CARBON = '72.993e03e9-2574-40fc-807c-65b06be378fd'     # System Data theme "Carbon"
+THEMES = {'classic': THEME_CLASSIC, 'carbon': THEME_CARBON}
 # UI Toolkit 8.6.0.0 coach views (name -> id); the same ids on BAW 26
 VIEWS = {'Alerts': '64.e6b70dd5-4d8e-4598-a08b-dcb9a9dfaba5', 'Area Chart SDS': '64.2c8ffc35-7cea-4d7b-85d9-e3d02a901bea', 'Badge': '64.dbd042c3-8328-49af-9f0b-a92ba4ffb841',
          'Bar Chart SDS': '64.8d17dda8-175c-49ec-aaa8-cba00f7b5c24', 'Breadcrumbs': '64.281a0d61-afa8-4297-bbc8-29a2d1c1bc83', 'Button': '64.7133c7d4-1a54-45c8-89cd-a8e8fa4a8e36',
@@ -107,7 +113,7 @@ BPD_OFFICE = ('<officeIntegration><sharePointParentSiteDisabled>true</sharePoint
               '<sharePointWorkspaceSiteDescription>This site has been automatically generated for managing collaborations and documents for the process instance: &lt;#= tw.system.process.name #&gt; &lt;#= tw.system.process.instanceId #&gt;</sharePointWorkspaceSiteDescription>'
               '<sharePointWorkspaceSiteTemplate>WorkspaceSiteTemplate.stp</sharePointWorkspaceSiteTemplate><sharePointLCID>1033</sharePointLCID></officeIntegration>')
 # Diagram geometry the designer uses (pixels): node boxes, lane stacking, column spacing of the automatic layout
-BPD_SIZE = {'start': (24, 24), 'end': (24, 24), 'timer': (24, 24), 'gateway': (32, 32), 'parallel': (32, 32), 'script': (95, 70), 'service': (95, 70), 'user': (95, 70)}
+BPD_SIZE = {'start': (24, 24), 'end': (24, 24), 'timer': (24, 24), 'boundary': (24, 24), 'gateway': (32, 32), 'parallel': (32, 32), 'script': (95, 70), 'service': (95, 70), 'user': (95, 70)}
 BPD_LANE_HEIGHT = 150; BPD_COLUMN = 150; BPD_LEFT = 60
 
 def esc(s): return str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('\r', '&#xD;')
@@ -244,6 +250,11 @@ class Layout:
                                                             "the coach generator answers 500 for an unknown option")
             for box_id, _ in boxes:
                 assert box_id in boxes_declared, f"{item_id}: '{view}' has no content box '{box_id}' (declared: {', '.join(boxes_declared) or 'none'})"
+        for k, v in options.items():   # event expressions run in the browser: there is no tw object (ReferenceError: tw is not defined)
+            if k.startswith('event') and isinstance(v, str) and re.search(r'\btw\.(local|env|system|object)\b', v):
+                raise AssertionError(f"{item_id}: the {k} expression uses tw.* - coach event expressions have no tw object (ReferenceError at "
+                                     "click time, on every version). Read values with control getters (${Ctrl}.getText(), getSelectedRecords()) "
+                                     "and pass a service input with ${SvcCall}.execute({field: value, ...})")
         for k, v in (options or {}).items():
             cfgs = cfgs + [self.cfg(k, v[1], True) if isinstance(v, tuple) else self.cfg(k, v if isinstance(v, str) else json.dumps(v))]
         if top: head = f'<{ns}:layoutItem xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="{ns}:ViewRef" version="8550">'; tail = f'</{ns}:layoutItem>'
@@ -332,15 +343,336 @@ class Layout:
     def status_line(self, item_id='StatusLine'): return self.output(item_id, 'Status')
     def message_modal(self, item_id='Msg'):
         return self.modal(item_id, 'Message', [self.output(item_id + 'Text', item_id + 'Text')], primary='OK', width='700px')
+    # ---- more UI Toolkit controls (added with the UI Controls Kit; each proven in playback - see the controls catalogue in the knowledge base)
+    # inputs
+    def decimal(self, item_id, label, binding=None, places=2, currency=None, width='240px', **options):
+        """Decimal (binding Decimal): decimalPlaces, currency = ISO code such as 'EUR' (None = plain number), prefix / postfix, placeHolder."""
+        o = {'decimalPlaces': str(places)}
+        if currency: o['currency'] = currency
+        o.update(options)
+        return self.ref(item_id, 'Decimal', self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=o)
+    def radio_group(self, item_id, label, binding, items, **options):
+        """Radio Button Group with a static list (binding ANY -> a String variable holds the `name`): items = [(bound value, shown text)]."""
+        o = {'itemLookupMode': 'L', 'staticList': json.dumps([{'name': v, 'value': t} for v, t in items]), 'labelPlacement': 'T'}; o.update(options)
+        return self.ref(item_id, 'Radio Button Group', self.std(label), binding=binding, options=o)
+    def radio(self, item_id, label, binding, value, group, **options):
+        """One Radio Button (binding ANY shared by the buttons of a groupName): selecting it writes valueWhenSelected into the binding."""
+        o = {'valueWhenSelected': value, 'groupName': group}; o.update(options)
+        return self.ref(item_id, 'Radio Button', self.std(label), binding=binding, options=o)
+    def multi_select(self, item_id, label, binding, items, width='320px', **options):
+        """Multi Select with a static list (binding = a list variable `tw.local.x.tags[]`, receives the `name` values): items = [(value, text)]."""
+        o = {'itemLookupMode': 'L', 'staticList': json.dumps([{'name': v, 'value': t} for v, t in items]), 'labelPlacement': 'T'}; o.update(options)
+        return self.ref(item_id, 'Multi Select', self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=o)
+    def select_service(self, item_id, label, binding, flow, input_binding=None, width='320px', view='Single Select', **options):
+        """Single Select (or view='Multi Select' / 'Radio Button Group' / 'Checkbox Group') whose items come from an Ajax flow of this app:
+        input `data` (input_binding), output `results` = NameValuePair[] (name = bound value, value = shown text)."""
+        o = {'itemLookupMode': 'S', 'itemService': self.app.flow_id(flow), 'labelPlacement': 'T'}
+        if input_binding: o['inputData'] = ('dynamic', input_binding)
+        o.update(options)
+        return self.ref(item_id, view, self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=o)
+    def date_picker(self, item_id, label, binding=None, fmt=None, **options):
+        """Date Picker (binding Date, date only, text box + calendar): fmt = display format such as 'yyyy-mm-dd' (lower-case tokens),
+        enableTodayButton / enableClearButton 'true', startView 0 month / 1 year / 2 decade."""
+        o = {}
+        if fmt: o['format'] = fmt
+        o.update(options)
+        return self.ref(item_id, 'Date Picker', self.std(label), binding=binding, options=o)
+    def datetime(self, item_id, label, binding=None, time=True, fmt=None, **options):
+        """Date Time Picker (binding Date): time=True adds the time picker (includeTimePicker); fmt = Java SimpleDateFormat pattern
+        ('yyyy-MM-dd HH:mm'); date() is the same control without the time part."""
+        o = {'includeTimePicker': 'true' if time else 'false'}
+        if fmt: o['format'] = fmt
+        o.update(options)
+        return self.ref(item_id, 'Date Time Picker', self.std(label), binding=binding, options=o)
+    def masked_text(self, item_id, label, binding=None, mask='(###) ###-####', width='240px', **options):
+        """Masked Text (binding String): mask = # digit, a letter, * either, other characters are literals kept in the bound value."""
+        o = {'mask': mask}; o.update(options)
+        return self.ref(item_id, 'Masked Text', self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=o)
+    def password(self, item_id, label, binding=None, width='240px', **options):
+        """Password (binding String, masked input)."""
+        return self.ref(item_id, 'Password', self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=options)
+    def type_ahead(self, item_id, label, binding=None, items=(), width='240px', **options):
+        """Type Ahead Text (binding String): items = static suggestions (itemLookupMode L, itemList = JSON list of strings), dropdownItems."""
+        o = {'itemLookupMode': 'L', 'itemList': json.dumps(list(items))}; o.update(options)
+        return self.ref(item_id, 'Type Ahead Text', self.std(label) + [self.cfg('@width', responsive(width))], binding=binding, options=o)
+    def text_editor(self, item_id, label, binding=None, height='160px', **options):
+        """Text Editor (binding String = the HTML of the rich text)."""
+        return self.ref(item_id, 'Text Editor', self.std(label) + [self.cfg('@width', responsive('100%')), self.cfg('height', responsive(height))], binding=binding, options=options)
+    def text_reader(self, item_id, label, binding=None, max_len=128, **options):
+        """Text Reader (binding String): read-only text cut after max_len characters with a read more / read less link (readMoreHint / readLessHint)."""
+        o = {'maxTextLen': str(max_len)}; o.update(options)
+        return self.ref(item_id, 'Text Reader', self.std(label), binding=binding, options=o)
+    def switch(self, item_id, label, binding=None, on='On', off='Off', style='P', **options):
+        """Switch (binding Boolean): onLabel / offLabel (text, or icon names with labelType I), colorStyle D/P/I/S/W/G, shapeStyle D/S/M."""
+        o = {'onLabel': on, 'offLabel': off, 'colorStyle': style}; o.update(options)
+        return self.ref(item_id, 'Switch', self.std(label), binding=binding, options=o)
+    def slider(self, item_id, label, binding=None, min=0, max=100, step=1, style='P', width='320px', **options):
+        """Slider (binding Decimal): min / max / step, colorStyle D/P/I/S/W/E; getValue() / setValue()."""
+        o = {'min': str(min), 'max': str(max), 'step': str(step), 'colorStyle': style, 'width': responsive(width)}; o.update(options)
+        return self.ref(item_id, 'Slider', self.std(label), binding=binding, options=o)
+    def signature(self, item_id, label, binding=None, width='320px', height='120px', **options):
+        """Signature (binding String = PNG data URL of the drawing): width / height in px; clear(); isEmpty() is false until clear() ran once."""
+        o = {'width': responsive(width), 'height': responsive(height)}; o.update(options)
+        return self.ref(item_id, 'Signature', self.std(label), binding=binding, options=o)
+    def qr_code(self, item_id, label, binding=None, size='140px', **options):
+        """QR Code (binding String = the encoded text): width / height, errorCorrectionLevel L/M/Q/H."""
+        o = {'width': responsive(size), 'height': responsive(size)}; o.update(options)
+        return self.ref(item_id, 'QR Code', self.std(label), binding=binding, options=o)
+    # display
+    def badge(self, item_id, text, style='P', shape='B', **options):
+        """Badge (no binding): text set on load, colorStyle D/P/I/S/W/E, shapeStyle B badge / L label / T tag; setText()."""
+        o = {'colorStyle': style, 'shapeStyle': shape, 'eventON_LOAD': f'me.setText({json.dumps(text)});'}; o.update(options)
+        return self.ref(item_id, 'Badge', self.std(item_id, False), options=o)
+    def icon(self, item_id, icon, style='P', size='24px', on_click=None, **options):
+        """Icon (binding Boolean isClicked, optional): Font Awesome name, colorStyle D/P/I/S/W/G/T, iconSize; on_click = event expression."""
+        o = {'icon': icon, 'colorStyle': style, 'iconSize': responsive(size)}
+        if on_click: o['eventON_CLICK'] = on_click
+        o.update(options)
+        return self.ref(item_id, 'Icon', self.std(item_id, False), options=o)
+    def image(self, item_id, url, app=None, external=False, width='120px', height=None, **options):
+        """Image (unbound): url = the name of a web file of this app (app=None) or of another app / toolkit (its acronym), served as a
+        managed asset (defaultURLType Web), or an absolute URL with external=True; width / height, radius."""
+        o = {'defaultURL': responsive(url), 'defaultURLType': 'External' if external else 'Web', 'width': responsive(width)}
+        if not external: o['defaultAppAcronym'] = responsive(app or self.app.acronym)
+        if height: o['height'] = responsive(height)
+        o.update(options)
+        return self.ref(item_id, 'Image', self.std(item_id, False), options=o)
+    def line(self, item_id):
+        """Line: a horizontal rule (no options, no binding)."""
+        return self.ref(item_id, 'Line', self.std(item_id, False))
+    def note(self, item_id, title, binding=None, text=None, style='I', heading='H4', **options):
+        """Note (binding String = the text, or text= set on load): label = title, colorStyle D/P/S/I/W/G, labelStyle H1..H4."""
+        o = {'colorStyle': style, 'labelStyle': heading}
+        if text: o['eventON_LOAD'] = f'me.setText({json.dumps(text)});'
+        o.update(options)
+        return self.ref(item_id, 'Note', self.std(title), binding=binding, options=o)
+    def notification(self, item_id, text, style='W', icon='bell', **options):
+        """Notification (no binding): text set on load, colorStyle D/P/I/S/W/E, icon = Font Awesome name; setText()."""
+        o = {'colorStyle': style, 'icon': icon, 'eventON_LOAD': f'me.setText({json.dumps(text)});'}; o.update(options)
+        return self.ref(item_id, 'Notification', self.std(item_id, False), options=o)
+    def well(self, item_id, children, style='D', icon=None, **options):
+        """Well (ContentBox1): colorStyle D/P/I/S/W/G, colorDarkness N/D/R, icon (Font Awesome) + iconPosition TR/TL/BR/BL, padding."""
+        o = {'colorStyle': style}
+        if icon: o['icon'] = responsive(icon)
+        o.update(options)
+        return self.ref(item_id, 'Well', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def tooltip(self, item_id, text, children, style='D', **options):
+        """Tooltip around one control (ContentBox1): text shown on hover (showOnHover), colorStyle, horizontalPos L/C/R, verticalPos T/B."""
+        o = {'colorStyle': style, 'showOnHover': 'true', 'eventON_LOAD': f'me.setText({json.dumps(text)});'}; o.update(options)
+        return self.ref(item_id, 'Tooltip', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def progress(self, item_id, label, binding=None, max=100, style='S', **options):
+        """Progress Bar (binding Decimal): maxValue = the 100 % value, colorStyle D/P/I/S/W/G, striped / active; setProgress() / getProgress()."""
+        o = {'maxValue': str(max), 'colorStyle': style}; o.update(options)
+        return self.ref(item_id, 'Progress Bar', self.std(label), binding=binding, options=o)
+    def spacer(self, item_id, width='100%', height='12px'):
+        """Spacer: an empty box of width x height."""
+        return self.ref(item_id, 'Spacer', self.std(item_id, False), options={'width': responsive(width), 'height': responsive(height)})
+    def status_box(self, item_id, label='', children=(), style='I', status_style='D', **options):
+        """Status Box (ContentBox1 optional): the strip element is created when the status becomes visible while a text is set, so show a
+        status with `${id}.setStatusText(t); ${id}.setStatusVisible(false); ${id}.setStatusVisible(true);` (setStatusText alone shows
+        nothing); colorStyle D/P/S/I/W/E, statusStyle N plain paragraph / D strip / K dark / S simple."""
+        o = {'colorStyle': style, 'statusStyle': status_style, 'showStatus': responsive(True)}; o.update(options)
+        return self.ref(item_id, 'Status Box', self.std(label, bool(label)), boxes=[('ContentBox1', list(children))] if children else (), options=o)
+    # structure
+    def collapsible(self, item_id, title, children, collapsed=False, group=None, style='D', on_expand=None, on_collapse=None, **options):
+        """Collapsible Panel (ContentBox1): initiallyCollapsed, panelGroup (one open panel per group), colorStyle D/P/S/I/W/G; expand() / collapse() / isExpanded()."""
+        o = {'initiallyCollapsed': 'true' if collapsed else 'false', 'colorStyle': style}
+        if group: o['panelGroup'] = group
+        if on_expand: o['eventON_EXPAND'] = on_expand
+        if on_collapse: o['eventON_COLLAPSE'] = on_collapse
+        o.update(options)
+        return self.ref(item_id, 'Collapsible Panel', self.std(title), boxes=[('ContentBox1', children)], options=o)
+    def hsplit(self, item_id, panes, height='240px', **options):
+        """Horizontal Split (ContentBox1, one pane per child): panes = [(size such as '30%', [children])]; paneSpecs = size / handleLocation
+        N/M/S/E per pane; the control needs an explicit height. collapsePane(i) / expandPane(i) / isPaneCollapsed(i)."""
+        specs = [{'size': size, 'collapsedSize': '', 'splitterThickness': '', 'handleLocation': 'M'} for size, _ in panes]
+        children = [self.vlayout(f'{item_id}Pane{i}', c) for i, (_, c) in enumerate(panes)]
+        o = {'height': height, 'paneSpecs': json.dumps(specs)}; o.update(options)
+        return self.ref(item_id, 'Horizontal Split', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def input_group(self, item_id, label, children, button='search', kind='I', style='P', location='R', on_click=None, **options):
+        """Input Group (ContentBox1 = one input control) with an attached button: buttonKind I icon / T text / M menu, buttonInfo = icon
+        name or text, buttonLocation L/R, buttonColorStyle; on_click = On button click expression."""
+        o = {'buttonKind': kind, 'buttonInfo': button, 'buttonColorStyle': style, 'buttonLocation': location, 'labelPlacement': 'T'}
+        if on_click: o['eventON_CLICK'] = on_click
+        o.update(options)
+        return self.ref(item_id, 'Input Group', self.std(label), boxes=[('ContentBox1', children)], options=o)
+    def caption(self, item_id, label, child, placement='L', width='60%', **options):
+        """Caption Box (ContentBox1 = exactly one child): label placed T/L/B/R of the child, labelWidth, labelColorStyle."""
+        o = {'labelPlacement': placement, 'width': responsive(width)}; o.update(options)
+        return self.ref(item_id, 'Caption Box', self.std(label), boxes=[('ContentBox1', [child])], options=o)
+    def stack(self, item_id, panes, default=0, **options):
+        """Stack (ContentBox1, one pane per child, one visible at a time): defaultPaneIdx; setCurrentPane(i) / getCurrentPane(); binding Integer = pane index."""
+        o = {'defaultPaneIdx': str(default)}; o.update(options)   # getCurrentPane() answers null until setCurrentPane() ran once (unbound stack)
+        return self.ref(item_id, 'Stack', self.std(item_id, False), boxes=[('ContentBox1', panes)], options=o)
+    def table_layout(self, item_id, rows, collapse=True, **options):
+        """Table Layout > Table Layout Row > Table Layout Cell grid: rows = [[cell children, ...], ...] (each cell = a list of controls); borderCollapse C/S."""
+        row_items = []
+        for r, cells in enumerate(rows):
+            cell_items = [self.ref(f'{item_id}R{r}C{c}', 'Table Layout Cell', self.std(f'{item_id}R{r}C{c}', False), boxes=[('ContentBox1', children)]) for c, children in enumerate(cells)]
+            row_items.append(self.ref(f'{item_id}R{r}', 'Table Layout Row', self.std(f'{item_id}R{r}', False), boxes=[('ContentBox1', cell_items)]))
+        o = {'borderCollapse': 'C' if collapse else 'S'}; o.update(options)
+        return self.ref(item_id, 'Table Layout', self.std(item_id, False), boxes=[('ContentBox1', row_items)], options=o)
+    def sensor(self, item_id, children, factors=(('narrow', 600), ('wide', 99999)), on_boundary=None, **options):
+        """Responsive Sensor (ContentBox1): boxFactors = [(name, widthUpTo px)]; a layout inside declares `behaviors`
+        ('[{"boxFactorName": "narrow", "childLayout": "V"}]') per box factor; getActiveBoxFactor(), on_boundary = On responsive boundary."""
+        o = {'boxFactors': json.dumps([{'name': n, 'widthUpTo': w} for n, w in factors])}
+        if on_boundary: o['eventON_BOUNDARY'] = on_boundary
+        o.update(options)
+        return self.ref(item_id, 'Responsive Sensor', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def variant(self, item_id, label, binding, children, auto=True, **options):
+        """Variant (binding ANY, ContentBox1 = candidate controls): shows the child matching the type of the bound value (autoSelectControl) or initialControlIndex; getValue() / setValue()."""
+        o = {'autoSelectControl': 'true' if auto else 'false'}; o.update(options)
+        return self.ref(item_id, 'Variant', self.std(label), binding=binding, boxes=[('ContentBox1', children)], options=o)
+    def popup_menu(self, item_id, children, items, on_item=None, **options):
+        """Popup Menu around the control in ContentBox1: nothing opens it by itself - the inner control's click calls
+        `${id}.setMenuVisible(!${id}.isMenuVisible())`; items = [(command, text[, icon])] or ('-',) for a separator (menuItems);
+        on_item = On item click expression, `command` = the clicked item's command."""
+        specs = [({'itemType': 'S'} if it[0] == '-' else {'command': it[0], 'itemType': 'L', 'itemText': it[1], 'icon': it[2] if len(it) > 2 else ''}) for it in items]
+        o = {'menuItems': json.dumps(specs), 'castShadow': 'true'}
+        if on_item: o['eventON_ICLICK'] = on_item
+        o.update(options)
+        return self.ref(item_id, 'Popup Menu', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def deferred(self, item_id, children, auto=False, delay=0, on_load=None, **options):
+        """Deferred Section (ContentBox1 rendered later): autoLoad + autoLoadDelay ms, or `${id}.lazyLoad(0)` from an event; on_load = On lazy-loaded expression; isLoaded()."""
+        o = {'autoLoad': 'true' if auto else 'false', 'autoLoadDelay': str(delay)}
+        if on_load: o['eventON_SECLOAD'] = on_load
+        o.update(options)
+        return self.ref(item_id, 'Deferred Section', self.std(item_id, False), boxes=[('ContentBox1', children)], options=o)
+    def panel_header(self, item_id, children):
+        """Panel Header (ContentBox1): the title strip of a Panel when placed as its first child."""
+        return self.ref(item_id, 'Panel Header', self.std(item_id, False), boxes=[('ContentBox1', children)])
+    def panel_footer(self, item_id, children):
+        """Panel Footer (ContentBox1): the footer strip of a Panel when placed as its last child."""
+        return self.ref(item_id, 'Panel Footer', self.std(item_id, False), boxes=[('ContentBox1', children)])
+    # navigation, events, data
+    def breadcrumbs(self, item_id, label, binding, on_click=None, **options):
+        """Breadcrumbs (binding NameValuePair[]: name = text, value = data): on_click = On item click expression with `label` and
+        `item` = {label, level, data}; returning false keeps the trail (it is trimmed to the clicked item otherwise); appendItem() / trim()."""
+        o = {}
+        if on_click: o['eventON_ITEM_CLICK'] = on_click
+        o.update(options)
+        return self.ref(item_id, 'Breadcrumbs', self.std(label, bool(label)), binding=binding if binding.endswith('[]') else binding + '[]', options=o)
+    def alerts(self, item_id, style='I', fade=0, **options):
+        """Alerts (no binding): the area where `${id}.appendAlert(title, text, style P/I/S/W/G, timeoutMs)` shows dismissable alerts;
+        alertColorStyle = default style, autoFadeDelay ms (0 = stay), animate; clear()."""
+        o = {'alertColorStyle': style, 'autoFadeDelay': str(fade), 'animate': 'true'}; o.update(options)
+        return self.ref(item_id, 'Alerts', self.std(item_id, False), options=o)
+    def modal_alert(self, item_id, title, style='I', button='OK', on_close=None, **options):
+        """Modal Alert: `${id}.setText(msg); ${id}.show();` opens a one-button dialog titled with the label; colorStyle P/I/S/W/G, buttonLabel, on_close = On close."""
+        o = {'colorStyle': style, 'buttonLabel': button}
+        if on_close: o['eventON_CLOSE'] = on_close
+        o.update(options)
+        return self.ref(item_id, 'Modal Alert', self.std(title), options=o)
+    def exit_safeguard(self, item_id, challenge=False, message='You have unsaved changes.', **options):
+        """Exit Safeguard: the browser's leave-page challenge (challengeByDefault, message); setExitChallenged(bool) / isExitChallenged()."""
+        o = {'challengeByDefault': 'true' if challenge else 'false', 'message': message}; o.update(options)
+        return self.ref(item_id, 'Exit Safeguard', self.std(item_id, False), options=o)
+    def event_subscription(self, item_id, event_name, on_event, binding=None, **options):
+        """Event Subscription: runs on_event (synchronously) when `bpmext.ui.publishEvent(event_name, payload)` is called anywhere in the
+        page; publish a string (JSON text) - an object payload comes back wrapped as a coach object; the payload lands in the binding
+        (a String variable) and in getEventData()."""
+        o = {'eventName': event_name, 'eventON_EVENT': on_event}; o.update(options)
+        return self.ref(item_id, 'Event Subscription', self.std(item_id, False), binding=binding, options=o)
+    def timer(self, item_id, ms=1000, repeat=False, stopped=True, on_timeout=None, **options):
+        """Timer: timeout ms, repeat, stopped (start() later); on_timeout = On timeout expression; getTicks() / stop() / isRunning()."""
+        o = {'timeout': str(ms), 'repeat': 'true' if repeat else 'false', 'stopped': 'true' if stopped else 'false'}
+        if on_timeout: o['eventON_TIMEOUT'] = on_timeout
+        o.update(options)
+        return self.ref(item_id, 'Timer', self.std(item_id, False), options=o)
+    def configuration(self, item_id='Config', parameters=None, debugging=False, **options):
+        """Configuration (one per coach): parameters = {name: value} read with `${Config}.getParameter(name)`; debugging switch, locale."""
+        o = {'debugging': 'true' if debugging else 'false', 'parameters': json.dumps([{'name': k, 'value': v} for k, v in (parameters or {}).items()])}; o.update(options)
+        return self.ref(item_id, 'Configuration', self.std(item_id, False), options=o)
+    def data(self, item_id, binding=None, **options):
+        """Data (binding ANY): an invisible value holder, getValue() / setValue(); its On change fires when the bound data changes."""
+        return self.ref(item_id, 'Data', self.std(item_id, False), binding=binding, options=options)
+    def device_sensor(self, item_id='Device'):
+        """Device Sensor (binding DeviceInfo optional): getDeviceInfo() = {os, browserName, browserMajorVersion, screenWidth, clientWidth, language, isIPad, ...}."""
+        return self.ref(item_id, 'Device Sensor', self.std(item_id, False))
+    def geo_location(self, item_id, mode='S', on_info=None, on_error=None, **options):
+        """Geo Location (binding GeoLocation optional): monitoringMode L once on load / C continuous / S stopped (requestUpdate() later);
+        on_info receives `location`, on_error receives `error` (the browser asks the user for permission)."""
+        o = {'monitoringMode': mode}
+        if on_info: o['eventON_LOCINFO'] = on_info
+        if on_error: o['eventON_LOCINFOERR'] = on_error
+        o.update(options)
+        return self.ref(item_id, 'Geo Location', self.std(item_id, False), options=o)
+    def data_export(self, item_id, label, binding=None, table=None, file_type='csv', file_name='export', headers=None, style='D', **options):
+        """Data Export button: downloads the bound list (binding `tw.local.rows[]`, one column per field) or the Table named in `table`
+        (tableName = a sibling control id) as csv / xlsx (fileType); defName = file name, colHeaders = header texts."""
+        o = {'fileType': file_type, 'defName': file_name, 'colNames': 'true', 'colorStyle': style}
+        if table: o['tableName'] = table
+        if headers: o['colHeaders'] = json.dumps(list(headers))
+        o.update(options)
+        return self.ref(item_id, 'Data Export', self.std(label), binding=binding, options=o)
+    # charts and service-fed tables
+    CHARTS = {'bar': 'Bar Chart SDS', 'line': 'Line Chart SDS', 'pie': 'Pie Chart SDS', 'donut': 'Donut Chart SDS', 'area': 'Area Chart SDS', 'step': 'Step Chart SDS', 'multi': 'Multi Purpose Chart'}
+    def chart(self, item_id, kind, series=None, flow=None, height=260, style=None, chart_type=None, **options):
+        """SDS chart (kind bar / line / pie / donut / area / step) or kind 'multi' = Multi Purpose Chart. Data = a UI Toolkit DataSeries
+        {seriesName, dataPoints[{label, value}]}: from a variable (series = 'tw.local.series', dataMode B; for multi a DataSeries[] variable)
+        or from an Ajax flow of this app (flow = its name, dataMode S: inputs `input` String + `drillDownStack` NameValuePair[], output
+        `dataSeries` DataSeries; multi: output `multiDataSeries` DataSeries[]). height px, dataSeriesColorStyle P/I/S/W/G/L (pie / donut /
+        multi accept L default palette), chart_type for multi = B bar / L line / A area / S spline / R area spline / T step / E area step / P pie / D donut.
+        getDataSeries() answers {name, items[{label, value}]}; refresh() re-runs the flow, redrawChart() re-sizes a chart drawn in a hidden tab."""
+        view = self.CHARTS[kind]
+        o = {'height': responsive(height), 'showTooltip': 'true'} if kind not in ('pie', 'donut') else {'height': responsive(height), 'showTooltip': 'true', 'legendPlacement': 'B'}
+        if kind == 'multi': o = {'height': responsive(height), 'tooltipStyle': 'G', 'legendPlacement': 'B', 'defaultChartType': chart_type or 'B'}
+        if style: o['dataSeriesColorStyle'] = style
+        if series:
+            o['dataMode'] = 'B'
+            if kind == 'multi': o['mds'] = 'true'; o['multiDataSeries'] = ('dynamic', series)
+            else: o['singleDataSeries'] = ('dynamic', series)
+        elif flow:
+            o['dataMode'] = 'S'
+            if kind == 'multi': o['mds'] = 'true'; o['mdsDataService'] = self.app.flow_id(flow)
+            else: o['sdsDataService'] = self.app.flow_id(flow)
+        o.update(options)
+        return self.ref(item_id, view, self.std(item_id, False), options=o)
+    def service_table(self, item_id, title, flow, binding, cols, input_binding=None, selection='S', page=10, height=None, **options):
+        """Service Data Table: rows fetched from an Ajax flow of this app (input `data` = queryData, output `results` = a list of business
+        objects) into the bound list variable (`tw.local.svcRows`); the columns are Output Text children bound to currentItem.<field> like
+        the Table (the control counts its columns from the children), cols = [(field, header)] also become columnSpecs; refresh(true) reloads
+        with the current query data; give it a height when the sticky header overlaps the first row."""
+        children = [self.ref(f'{item_id}_{re.sub("[^A-Za-z0-9]", "", f)}', 'Output Text', self.std(label), binding=f'{binding}.currentItem.{f}') for f, label in cols]
+        specs = json.dumps([{"dataElementName": f, "renderAs": "H", "visibility": "V", "sortable": True, "options": "", "css": "", "width": "", "label": label} for f, label in cols])
+        o = {'dataService': self.app.flow_id(flow), 'columnSpecs': specs, 'selectionMode': selection, 'showFooter': responsive(True), 'showPager': responsive(True),
+             'showTableStats': responsive(True), 'pageSize': responsive(page), 'tableStyle': 'S', '@width': responsive('100%')}
+        if input_binding: o['queryData'] = ('dynamic', input_binding)
+        if height: o['height'] = responsive(height)
+        o.update(options)
+        return self.ref(item_id, 'Service Data Table', self.std(title), binding=f'{binding}[]', boxes=[('ContentBox1', children)], options=o)
+
+# CP4BA Workflow serves the product applications under a context root: /bas on the Studio (Workflow Authoring), /baw-<instance> on a
+# Process Server (e.g. /baw-bawins1). Server-side REST calls of the kit (kitHttp) append every path (/rest/..., /bpm/..., /ops/...) to
+# serverBaseURL, so the context root belongs in serverBaseURL only: the in-pod loopback https://localhost:9443<context root>
+# (verified on CP4BA 24.0.1: Studio /bas and Process Server /baw-bawins1).
+def cp4ba_default(name, value, context_root):
+    """Environment variable default for target='cp4ba': the localhost:9443 loopback of serverBaseURL gets the context root."""
+    if name == 'serverBaseURL' and re.fullmatch(r'https://localhost:9443/?', str(value)): return 'https://localhost:9443' + context_root
+    return value
 
 # ------------------------------------------------------------------------------------------------------ the application
 class App:
-    def __init__(self, name, acronym, snapshot='1.0', description='', namespace=None, sysdata_tc=False, snapshot_description=''):
+    def __init__(self, name, acronym, snapshot='1.0', description='', namespace=None, sysdata_tc=False, snapshot_description='', target=None,
+                 context_root=None, theme=None):
+        """target = 'traditional' (default: System Data 8.6.0.0, any 8.6.2 / BAW 20-26 center) or 'cp4ba' (System Data bound to its
+        8.6.0.0_TC snapshot - required on a CP4BA Studio 24-26: the 8.6.0.0 binding imports there but assetsValidation reports ErrorType 5 and
+        the snapshot cannot be installed on a Process Server). Both write targetEnvironment BAW_tWAS: the Studio turns it into BAW_CP4A on
+        import, while a traditional Workflow Center refuses BAW_CP4A ("can't import versions of projects intended for a container only
+        environment") - so a cp4ba build also imports on BAW 20.0.0.1 and 26 (both carry 8.6.0.0_TC). Verified on 20.0.0.1, 26, CP4BA 24.0.1.
+        Default from the TWXKIT_TARGET environment variable.
+        context_root (cp4ba only) = the Workflow context root in the serverBaseURL default: '/bas' (Studio, default) or '/baw-<instance>'
+        (Process Server); default from TWXKIT_CONTEXT_ROOT. On a Process Server the value can also be changed after the install
+        (POST /ops/std/bpm/containers/<acr>/versions/<v>/env_vars {"pairs": [{"name": "serverBaseURL", "value": ...}]} - live)."""
         assert re.fullmatch(r'[A-Z0-9_]{1,7}', acronym), 'acronym: 1-7 upper-case letters / digits'
+        self.target = (target or os.environ.get('TWXKIT_TARGET') or 'traditional').lower()
+        assert self.target in ('traditional', 'cp4ba'), "target: 'traditional' or 'cp4ba'"
+        self.context_root = '/' + (context_root or os.environ.get('TWXKIT_CONTEXT_ROOT') or '/bas').strip('/')
+        self.theme = (theme or os.environ.get('TWXKIT_THEME') or 'classic').lower(); assert self.theme in THEMES, f'theme: {sorted(THEMES)}'
         self.name, self.acronym, self.snapshot, self.description = name, acronym, snapshot, description
         self.snapshot_description = snapshot_description
         self.ns = namespace or uuid.uuid5(uuid.NAMESPACE_URL, 'twxkit:' + acronym)
-        self.sys_snapshot = SYSDATA_TC_SNAPSHOT if sysdata_tc else SYSDATA['snapshot']
+        self.sys_snapshot = SYSDATA_TC_SNAPSHOT if (sysdata_tc or self.target == 'cp4ba') else SYSDATA['snapshot']
         self.dep_sys = self.did('dependency', 'TWSYS'); self.dep_ui = self.did('dependency', 'SYSBPMUI')
         self.project_id = '2066.' + self.did('project'); self.branch_id = '2063.' + self.did('branch'); self.snapshot_id = '2064.' + self.did('snapshot', snapshot)
         self.objects = {}      # id -> (name, type, xml)
@@ -358,11 +690,15 @@ class App:
     def type_ref(self, typ):
         """classRef / classId of a type name: System Data type -> '<dep>/12.x', business object of this app -> '/12.x'."""
         if typ in TYPES: return f'{self.dep_sys}/{TYPES[typ]}'
+        if typ in UITK_TYPES: return f'{self.dep_ui}/{UITK_TYPES[typ]}'
         if typ in self.bos: return '/' + self.bos[typ]
         raise KeyError(f'unknown type {typ}: declare the business object first')
     def type_id(self, typ):
         """Bare '12.x' id of a type (itemSubjectRef / evaluatesToTypeRef use itm.12.x)."""
-        return TYPES[typ] if typ in TYPES else self.bos[typ]
+        return TYPES[typ] if typ in TYPES else UITK_TYPES[typ] if typ in UITK_TYPES else self.bos[typ]
+    def type_scope(self, typ):
+        """Owner of a type for render_flow: True = business object of this app, False = System Data, or the UI Toolkit dependency id."""
+        return self.dep_ui if typ in UITK_TYPES else typ not in TYPES
     def flow_id(self, name):
         if name not in self.flows: raise KeyError(f'unknown flow {name}: declare it before the human service that calls it')
         return self.flows[name]
@@ -387,6 +723,7 @@ class App:
     def env(self, name, default, description=''):
         """Environment variable with its default. KITENV_<name> in the build environment overrides the default (lab builds with real
         hosts and users - give such a build its own snapshot name, the server caches tw.env per snapshot)."""
+        if self.target == 'cp4ba': default = cp4ba_default(name, default, self.context_root)
         default = os.environ.get('KITENV_' + name, default)
         assert default != '', f"environment variable {name}: the default must not be empty (the import fails on an empty value); use a placeholder such as '-' and treat it as empty in the scripts (kitEnv(name, '') does not, so compare explicitly)"
         self.envs.append((name, default, description))
@@ -449,7 +786,7 @@ class App:
         <participantRef>{team}</participantRef>
         <defaultXslRef isNull="true" />
         <defaultCssRef isNull="true" />
-        <defaultTheme>{self.dep_sys}/{THEME_CLASSIC}</defaultTheme>
+        <defaultTheme>{self.dep_sys}/{THEMES[self.theme]}</defaultTheme>
         <themeVersion isNull="true" />
         <defaultJsRefs isNull="true" />
         <isWbmEnabled>false</isWbmEnabled>
@@ -512,7 +849,7 @@ class App:
 """
                 e = {"annotation": {"documentation": [{}], "appinfo": [{"propertyName": [fname], "advancedParameterProperties": [{}]}]}, "name": fname}
                 if lst: e["maxOccurs"] = "unbounded"
-                e["type"] = f"{{http://lombardi.ibm.com/schema/}}{base}" if base in TYPES else f"{{http://{self.acronym}}}{base}"
+                e["type"] = f"{{http://lombardi.ibm.com/schema/}}{base}" if base in TYPES else f"{{http://SYSBPMUI}}{base}" if base in UITK_TYPES else f"{{http://{self.acronym}}}{base}"
                 e["otherAttributes"] = {"{http://www.ibm.com/bpmsdk}refid": self.type_id(base)}
                 elements.append(e)
             jd = {"attributeFormDefault": "unqualified", "elementFormDefault": "unqualified", "targetNamespace": f"http://{self.acronym}",
@@ -575,7 +912,9 @@ class App:
     # ---- teams (24.)
     def team(self, name, users=(), groups=(), default=False):
         """Team with standard members (user logins and/or group names of the server's registry). default=True makes it the
-        process app's default team (Process App Settings)."""
+        process app's default team (Process App Settings). TWXKIT_MEMBERS=u1,u2 in the build environment replaces the users of every
+        team that lists users (the registry of the target differs: celladmin on a lab, LDAP users on CP4BA)."""
+        if users and os.environ.get('TWXKIT_MEMBERS'): users = [u.strip() for u in os.environ['TWXKIT_MEMBERS'].split(',') if u.strip()]
         oid = '24.' + self.did('team', name); self.teams[name] = oid
         if default: self.default_team = name
         members = [{"name": u, "declaredType": "com.ibm.bpmsdk.model.bpmn20.ibmteamext.Member"} for u in users]
@@ -664,9 +1003,9 @@ class App:
         (linear), or nodes + edges (see render_flow: script / call / gateway nodes, conditional edges, loops).
         A flow used by a Service Call control must name its input `data` and its output `results`."""
         fid = '1.' + self.did('flow', name); self.flows[name] = fid
-        params = [(n, 'in', self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.split_type(t)[0] not in TYPES) for n, t in inputs] + \
-                 [(n, 'out', self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.split_type(t)[0] not in TYPES) for n, t in outputs]
-        vars_ = [(n, self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.split_type(t)[0] not in TYPES) for n, t in variables]
+        params = [(n, 'in', self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.type_scope(self.split_type(t)[0])) for n, t in inputs] + \
+                 [(n, 'out', self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.type_scope(self.split_type(t)[0])) for n, t in outputs]
+        vars_ = [(n, self.type_id(self.split_type(t)[0]), self.split_type(t)[1], self.type_scope(self.split_type(t)[0])) for n, t in variables]
         if nodes is None:
             if steps is None: steps = [('script', name, script or '')]
             nodes, edges = linear(self, steps)
@@ -1093,6 +1432,9 @@ class App:
     def bpd(self, name, lanes, nodes, flows, inputs=(), variables=(), searchable=(), exposed_team='All Users', instance_name=None, description=''):
         """Business process (BPD). lanes = [(name, team[, height])] top to bottom (team 'System' = system lane; other teams: 'All Users' or a
         team of this app); nodes = [dict(key, kind, name, lane, ...)] with kind start | end | timer (hours= / minutes= / custom='tw.local.date')
+        | boundary (timer attached to an activity: attach=<user / service / script node key>, hours= / minutes= / custom= like timer,
+        interrupting=False (default: the activity keeps running, the timer adds a token; True = the timer cancels the activity); x / y
+        default to the bottom edge of the activity; flows leave it like any node, nothing flows into it)
         | script (script=) | service (callee=<flow name>, inputs={param: expression}, outputs={param: variable}) | user (callee=<human service
         name built with cshs(inputs=, outputs=, exits=)>, inputs= / outputs= like service, priority=, due_hours=, subject=, narrative=) |
         gateway (exclusive; the flow without a condition is the default) | parallel; flows = [(src, dst[, name[, condition]])].
@@ -1111,9 +1453,19 @@ class App:
         N = []
         for i, n in enumerate(nodes):
             n = dict(n); k = n['kind']
-            if k not in BPD_SIZE: raise ValueError(f"node {n['key']}: unknown kind {k} (start, end, timer, script, service, user, gateway, parallel)")
+            if k not in BPD_SIZE: raise ValueError(f"node {n['key']}: unknown kind {k} (start, end, timer, boundary, script, service, user, gateway, parallel)")
+            if k == 'boundary':
+                host = [m for m in nodes if m['key'] == n.get('attach')]
+                if not host or host[0]['kind'] not in ('user', 'service', 'script'): raise KeyError(f"node {n['key']}: attach= must name a user / service / script node")
+                if host[0]['lane'] != n['lane']: raise ValueError(f"node {n['key']}: a boundary event lives in the lane of its activity ({host[0]['lane']})")
+                if any(f[1] == n['key'] for f in flows): raise ValueError(f"node {n['key']}: nothing flows into a boundary event")
             if n['lane'] not in lane_of: raise KeyError(f"node {n['key']}: unknown lane {n['lane']}")
             lane = lane_of[n['lane']]; w, h = BPD_SIZE[k]
+            if k == 'boundary':   # default position: on the bottom edge of the activity (list the activity first), a little apart per attached event
+                act = [m for m in N if m['key'] == n['attach']]
+                if not act: raise ValueError(f"node {n['key']}: list the boundary event after its activity {n['attach']}")
+                nth = sum(1 for m in N if m.get('attach') == n['attach'])
+                n.setdefault('x', act[0]['x'] + 20 + 28 * nth); n.setdefault('y', min(lane['height'] - h, act[0]['y'] + 58))
             n.setdefault('x', BPD_LEFT + BPD_COLUMN * i); n.setdefault('y', max(0, (lane['height'] - h) // 2))
             if n['y'] < 0 or n['y'] + h > lane['height']:
                 raise ValueError(f"node {n['key']}: y={n['y']} (+{h}) is outside lane {n['lane']} (height {lane['height']}); y is relative to the lane top")
@@ -1384,7 +1736,7 @@ def render_bpd(app, name, bid, nodes, flows, lanes, inputs, variables, searchabl
     # a decision gateway evaluates its outgoing flows in order and the default matches always: conditional flows first, the default last
     for n in nodes:
         if n['kind'] == 'gateway': out_flows[n['key']] = [f for f in out_flows[n['key']] if len(f) > 4 and f[4]] + [f for f in out_flows[n['key']] if not (len(f) > 4 and f[4])]
-    size = lambda n: (24, 24) if n['kind'] in ('start', 'end', 'timer', 'messageStart') else (32, 32) if n['kind'] in ('gateway', 'parallel') else (95, 70)
+    size = lambda n: (24, 24) if n['kind'] in ('start', 'end', 'timer', 'boundary', 'messageStart') else (32, 32) if n['kind'] in ('gateway', 'parallel') else (95, 70)
     ref = lambda ty: ty if str(ty).startswith('/') else dep(ty)          # class / team reference with the dependency prefix (System Data) or app-local
     bare = lambda ty: str(ty).lstrip('/')                                # bare id for itm. references and BPMN partitionElementRef
     cond = lambda f: f[4] if len(f) > 4 and f[4] else None
@@ -1431,6 +1783,9 @@ def render_bpd(app, name, bid, nodes, flows, lanes, inputs, variables, searchabl
         if k == 'timer':
             return (f'<ns16:intermediateCatchEvent name="{nm}" id="{i}"><ns16:extensionElements>{vis(n)}{defext(n)}</ns16:extensionElements>{inout(n)}'
                     f'<ns16:timerEventDefinition id="{did("bpd", name, "timerDef", n["key"])}" eventImplId="{did("bpd", name, "timerImpl", n["key"])}"><ns16:extensionElements><ns4:timerEventSettings>{timer_bpmn(n)}<ns4:toleranceInterval>0</ns4:toleranceInterval><ns4:toleranceIntervalResolution>Hours</ns4:toleranceIntervalResolution><ns4:useCalendar>false</ns4:useCalendar></ns4:timerEventSettings></ns16:extensionElements></ns16:timerEventDefinition></ns16:intermediateCatchEvent>')
+        if k == 'boundary':
+            return (f'<ns16:boundaryEvent cancelActivity="{"true" if n.get("interrupting") else "false"}" attachedToRef="{ids[n["attach"]]}" parallelMultiple="false" name="{nm}" id="{i}"><ns16:extensionElements>{vis(n)}{defext(n)}</ns16:extensionElements>{inout(n)}'
+                    f'<ns16:timerEventDefinition id="{did("bpd", name, "timerDef", n["key"])}" eventImplId="{did("bpd", name, "timerImpl", n["key"])}"><ns16:extensionElements><ns4:timerEventSettings>{timer_bpmn(n)}<ns4:toleranceInterval>0</ns4:toleranceInterval><ns4:toleranceIntervalResolution>Hours</ns4:toleranceIntervalResolution><ns4:useCalendar>false</ns4:useCalendar></ns4:timerEventSettings></ns16:extensionElements></ns16:timerEventDefinition></ns16:boundaryEvent>')
         if k == 'script': return f'<ns16:scriptTask scriptFormat="text/x-javascript"{default(n)} name="{nm}" id="{i}"><ns16:extensionElements>{vis(n)}</ns16:extensionElements>{inout(n)}<ns16:script>{esc(n["script"])}</ns16:script></ns16:scriptTask>'
         if k == 'service':
             return (f'<ns16:callActivity calledElement="{n["callee"]}"{default(n)} name="{nm}" id="{i}"><ns16:extensionElements><ns4:deleteTaskOnCompletion>true</ns4:deleteTaskOnCompletion>{vis(n)}{uts}<ns4:activityType>ServiceTask</ns4:activityType><ns4:activityExtension conditional="false"><ns4:conditionScript /></ns4:activityExtension></ns16:extensionElements>{inout(n)}{assoc(n)}{performers}</ns16:callActivity>')
@@ -1476,6 +1831,8 @@ def render_bpd(app, name, bid, nodes, flows, lanes, inputs, variables, searchabl
         if k == 'parallel': return {**base, "gatewayDirection": "Unspecified", "extensionElements": {"nodeVisualInfo": [nvi(n)]}, "declaredType": "parallelGateway"}
         if k == 'end': return {**base, "extensionElements": {"nodeVisualInfo": [nvi(n)]}, "declaredType": "endEvent"}
         if k == 'timer': return {**base, "parallelMultiple": False, "eventDefinition": [{"extensionElements": {"timerEventSettings": [{**({"customDate": timer_parts(n)['custom']} if timer_parts(n)['custom'] else {}), "relativeTime": timer_parts(n)['time'], "relativeTimeResolution": timer_parts(n)['unit'], "dateType": timer_parts(n)['dateType'], "toleranceInterval": "0", "useCalendar": False, "declaredType": "com.ibm.bpmsdk.model.bpmn20.ibmwleext.TTimerEventSettings", "toleranceIntervalResolution": "Hours", "relativeDirection": timer_parts(n)['direction']}]}, "declaredType": "timerEventDefinition", "id": did("bpd", name, "timerDef", n["key"]), "otherAttributes": {"eventImplId": did("bpd", name, "timerImpl", n["key"])}}], "extensionElements": {**({"default": [ids[out_flows[n['key']][0][0]]]} if out_flows[n['key']] else {}), "nodeVisualInfo": [nvi(n)]}, "declaredType": "intermediateCatchEvent"}
+        if k == 'boundary':
+            return {**base, "cancelActivity": bool(n.get('interrupting')), "attachedToRef": ids[n['attach']], "parallelMultiple": False, "eventDefinition": [{"extensionElements": {"timerEventSettings": [{**({"customDate": timer_parts(n)['custom']} if timer_parts(n)['custom'] else {}), "relativeTime": timer_parts(n)['time'], "relativeTimeResolution": timer_parts(n)['unit'], "dateType": timer_parts(n)['dateType'], "toleranceInterval": "0", "useCalendar": False, "declaredType": "com.ibm.bpmsdk.model.bpmn20.ibmwleext.TTimerEventSettings", "toleranceIntervalResolution": "Hours", "relativeDirection": timer_parts(n)['direction']}]}, "declaredType": "timerEventDefinition", "id": did("bpd", name, "timerDef", n["key"]), "otherAttributes": {"eventImplId": did("bpd", name, "timerImpl", n["key"])}}], "extensionElements": {**({"default": [ids[out_flows[n['key']][0][0]]]} if out_flows[n['key']] else {}), "nodeVisualInfo": [nvi(n)]}, "declaredType": "boundaryEvent"}
         if k == 'script': return {**base, "startQuantity": 1, **jdefault(n), "extensionElements": {"nodeVisualInfo": [nvi(n)]}, "isForCompensation": False, "completionQuantity": 1, "declaredType": "scriptTask", "scriptFormat": "text/x-javascript", "script": {"content": [n['script']]}}
         if k == 'service':
             return {**base, "extensionElements": {"activityExtension": [{"conditionScript": "", "conditional": False, "declaredType": "com.ibm.bpmsdk.model.bpmn20.ibmwleext.TActivityExtension"}], "deleteTaskOnCompletion": [True], "nodeVisualInfo": [nvi(n)], "userTaskSettings": [juts], "activityType": ["ServiceTask"]}, "declaredType": "callActivity", "startQuantity": 1, "resourceRole": [{**p, **({} if 'teamAssignmentType' not in p else {})} for p in jperf], **jdefault(n),
@@ -1508,7 +1865,18 @@ def render_bpd(app, name, bid, nodes, flows, lanes, inputs, variables, searchabl
     PRIORITY_CODE = {'Normal': '30.30'}   # only the default is known to import ('20.20' fails with "Invalid UUID string '20'" in BPDTaskActivityImplAG.priorityFromXML); other values pending the Hiring Sample export
     sched_of = lambda n: f'<dueDateType>1</dueDateType><dueDateTime>{n.get("due_hours", 1)}</dueDateTime><dueDateTimeResolution>1</dueDateTimeResolution><dueDateTimeTOD>00:00</dueDateTimeTOD><priorityType>0</priorityType><priority>{PRIORITY_CODE.get(n.get("priority", "Normal"), "30.30")}</priority>' + (f'<subject>{esc(n["subject"])}</subject>' if n.get('subject') else '') + (f'<narrative>{esc(n["narrative"])}</narrative>' if n.get('narrative') else '') + '<forceSend>true</forceSend>'
     sched2 = '<timeSchedule>(use default)</timeSchedule><timeScheduleType>0</timeScheduleType><timeZone>(use default)</timeZone><timeZoneType>0</timeZoneType><holidaySchedule>(use default)</holidaySchedule><holidayScheduleType>0</holidayScheduleType>'
-    def activity(n, body): return f'<flowObject id="{ids[n["key"]]}" componentType="Activity"><name>{esc(n["name"])}</name><documentation></documentation><position><location x="{n["x"]}" y="{n["y"]}" /></position><dropIconUrl>0</dropIconUrl><colorInput>#A5B7CD</colorInput><component>{body}</component>{ports(n)}</flowObject>'
+    def activity(n, body): return f'<flowObject id="{ids[n["key"]]}" componentType="Activity"><name>{esc(n["name"])}</name><documentation></documentation><position><location x="{n["x"]}" y="{n["y"]}" /></position><dropIconUrl>0</dropIconUrl><colorInput>#A5B7CD</colorInput><component>{body}</component>{ports(n)}{attached(n)}</flowObject>'
+    def timer_action(n):
+        tp = timer_parts(n)   # legacy codes: dateType 0 = now, 2 = custom date; resolution 0 = minutes, 1 = hours
+        return f'<EventAction id="{did("bpd", name, "timerDef", n["key"])}"><actionType>2</actionType><actionSubType>0</actionSubType><EventActionImplementation id="{did("bpd", name, "timerImpl", n["key"])}"><dateType>{2 if tp["custom"] else 0}</dateType>' + (f'<customDate>{esc(tp["custom"])}</customDate>' if tp['custom'] else '') + f'<relativeDirection>1</relativeDirection><relativeTime>{tp["time"]}</relativeTime><relativeTimeResolution>{0 if tp["unit"] == "Minutes" else 1}</relativeTimeResolution><toleranceInterval>0</toleranceInterval><toleranceIntervalResolution>1</toleranceIntervalResolution><UseCalendar>false</UseCalendar></EventActionImplementation></EventAction>'
+    def attached(n):   # boundary timers of an activity: <attachedEvent> children of its flowObject (legacy format of the Process Designer)
+        out = ''
+        for b in [m for m in nodes if m['kind'] == 'boundary' and m['attach'] == n['key']]:
+            flag = 'true' if b.get('interrupting') else 'false'
+            out += (f'<attachedEvent id="{ids[b["key"]]}" componentType="Event"><name>{esc(b["name"])}</name><documentation></documentation><position><location x="0" y="0" /></position><positionId>bottomCenter</positionId><dropIconUrl>0</dropIconUrl><colorInput>Color</colorInput>'
+                    f'<component><nameVisible>true</nameVisible><eventType>3</eventType><cancelActivity>{flag}</cancelActivity><repeatable>false</repeatable><doCloseTask>{flag}</doCloseTask>{timer_action(b)}</component>'
+                    + ''.join(f'<outputPort id="{bpdid("p." + b["key"] + ".out." + f[0])}"><positionId>bottomCenter</positionId><flow ref="{ids[f[0]]}" /></outputPort>' for f in out_flows[b['key']]) + '</attachedEvent>')
+        return out
     def lane_team(n): return [l for l in lanes if l['key'] == n['lane']][0]['team']
     def gateway(n, gateway_type=1): return f'<flowObject id="{ids[n["key"]]}" componentType="Gateway"><name>{esc(n["name"])}</name><documentation></documentation><position><location x="{n["x"]}" y="{n["y"]}" /></position><dropIconUrl>0</dropIconUrl><colorInput>#A5B7CD</colorInput><component><nameVisible>true</nameVisible><gatewayType>{gateway_type}</gatewayType><splitJoinType>0</splitJoinType></component>{ports(n)}</flowObject>'   # 1 = exclusive (decision), 5 = parallel (split)
     def message_action(n):
@@ -1527,6 +1895,7 @@ def render_bpd(app, name, bid, nodes, flows, lanes, inputs, variables, searchabl
         if k == 'gateway': return gateway(n)
         if k == 'parallel': return gateway(n, 5)
         if k == 'end': return event(n, 2)
+        if k == 'boundary': return ''   # rendered inside its activity (attached())
         if k == 'timer':
             tp = timer_parts(n)   # legacy codes: dateType 0 = now, 2 = custom date; resolution 0 = minutes, 1 = hours
             return event(n, 3, f'<EventAction id="{did("bpd", name, "timerDef", n["key"])}"><actionType>2</actionType><actionSubType>0</actionSubType><EventActionImplementation id="{did("bpd", name, "timerImpl", n["key"])}"><dateType>{2 if tp["custom"] else 0}</dateType>' + (f'<customDate>{esc(tp["custom"])}</customDate>' if tp['custom'] else '') + f'<relativeDirection>1</relativeDirection><relativeTime>{tp["time"]}</relativeTime><relativeTimeResolution>{0 if tp["unit"] == "Minutes" else 1}</relativeTimeResolution><toleranceInterval>0</toleranceInterval><toleranceIntervalResolution>1</toleranceIntervalResolution><UseCalendar>false</UseCalendar></EventActionImplementation></EventAction>')
@@ -1618,7 +1987,7 @@ def render_flow(app, name, fid, params, variables, nodes, edges, ajax=True, desc
     the gateway names its default flow; a loop is an edge back to the gateway."""
     did = lambda *p: app.did('flow', name, *p)
     sys_dep = app.dep_sys
-    ref = lambda cid, local: ('' if local else sys_dep) + '/' + cid
+    ref = lambda cid, local: ('' if local is True else (local if isinstance(local, str) else sys_dep)) + '/' + cid   # local: True = this app, False = System Data, str = a toolkit dependency id
     P = {n: '2055.' + did('param', n) for n, *_ in params}
     by_key = {n['key']: n for n in nodes}
     for n in nodes:
